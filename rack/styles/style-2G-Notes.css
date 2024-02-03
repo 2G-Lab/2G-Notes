@@ -1,0 +1,99 @@
+body {
+  background: #FFFFFF;
+  color:      #202830;
+  margin:      0px;
+}
+
+* {
+  word-wrap: break-word;
+  line-height:      1.5;
+  font-size:       16px;
+  font-family: "Noto Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+}
+
+a:link {
+  color: #086ADA;
+  text-decoration: none;
+}
+a:visited {
+  color: #806ADA;
+  text-decoration: none;
+}
+a:hover {
+  color: #F080B0;
+  text-decoration: underline;
+}
+a:active {
+  color: #C02080;
+  text-decoration: underline;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  margin-top:     1.50em;
+  margin-right:   0.00em;
+  margin-bottom:  0.25em; 
+  margin-left:    0.75em;
+  font-weight:    600;
+}
+
+p, li, blockquote, pre {
+  margin-top:     0.25em;
+  margin-right:   1.00em;
+  margin-bottom:  1.00em; 
+  margin-left:    1.00em;
+  font-size:    1.0000em;
+  font-weight:       400;
+}
+
+h1  {font-size: 1.5000em;}
+h2  {font-size: 1.3750em;}
+h3  {font-size: 1.2500em;}
+h4  {font-size: 1.1250em;}
+h5  {font-size: 1.0000em;}
+h6  {font-size: 0.9375em;}
+
+blockquote {
+  color:        #606870;
+
+  border-left-width:       4px;
+  border-left-style:     solid;
+  border-left-color: #D0D8E0;
+
+  padding-top:     0.00em;
+  padding-right:   1.00em;
+  padding-bottom:  0.00em; 
+  padding-left:    1.00em;
+}
+
+pre {
+  background:   #F0F2F4;
+  overflow:          auto;
+  margin:            16px;
+  line-height:        1.2;
+}
+
+code {
+  background:   #F0F2F4;
+  color:        #202860;
+  padding:          0.2em;
+  font-family: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+}
+pre code {
+  background: transparent;
+  padding:          0.0em;
+}
+
+hr {
+  border-width:           0px;
+  background-color: #D0D0D0;
+}
+hr.HR1 {height: 0.125em;}
+hr.HR2 {height: 0.250em;}
+
+.Pink   {color: #DE3163;} /* Bright Pink  */
+.Orange {color: #E67E22;} /* Vivid Orange */
+.Green  {color: #2ECC71;} /* Lime Green   */
+
+img {
+  width:       100%;
+}

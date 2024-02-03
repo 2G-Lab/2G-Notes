@@ -1,0 +1,1488 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>HLS study 4600</title>
+  <link rel="stylesheet" href="../rack/styles/style-2G.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/2G-Lab/2G-Image-Magnifier/src/magnifier.css">
+  <script src="https://cdn.jsdelivr.net/gh/2G-Lab/2G-Image-Magnifier/src/magnifier.s.js"></script>
+  <script>window.onload = (event) => {new x2G_ImageMagnifier ("diagrams")}</script>
+</head>
+<body>
+<div class="top">
+  <div class="header">Next note <a href="https://2g-lab.github.io/2G-Notes/4608.make-HLS-great-again/HLS-Study-4608.html">Make HLS Great Again</a></div>
+  <div class="header">Back to <a href="https://2g-lab.github.io/2G-Notes/">2G-Notes</a></div>
+</div>
+<main>
+<br>
+
+<h1>What could be Wrong with HLS</h1>
+
+<hr class="HR2">
+
+
+<p>
+  <br>
+  <a href="#1">1. Brief Description of the System</a>
+  <br>&nbsp;&nbsp;
+  <a href="#1-1">1.1. Basic Requirements for an Architecture of the Video Streaming System</a>
+  <br>&nbsp;&nbsp;
+  <a href="#1-2">1.2. Servers Software</a>
+  <br>&nbsp;&nbsp;
+  <a href="#1-3">1.3. CDN Key Functionality</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#1-3-1">1.3.1. Cache</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#1-3-2">1.3.2. Security Tokens</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#1-3-3">1.3.3. Load Balancing</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#1-3-4">1.3.4. Health Check</a>
+  <br>&nbsp;&nbsp;
+  <a href="#1-4">1.4. Providing Fault Tolerance for the Streaming System</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#1-4-1">1.4.1. Actual Failover Implementation</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#1-4-2">1.4.2. Failover Triggers</a>
+  <br><br>
+  <a href="#2">2. Known Issues</a>
+  <br>&nbsp;&nbsp;
+  <a href="#2-1">2.1. Incompatibility of the HLS Protocol and Failover Principles</a>
+  <br><br>
+  <a href="#3">3. The Playback Issue</a>
+  <br>&nbsp;&nbsp;
+  <a href="#3-1">3.1. Expectations vs Reality</a>
+  <br>&nbsp;&nbsp;
+  <a href="#3-2">3.2. Efforts to Identify the Malfunctioning Subsystem</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-0">3.2.0. Identification of the Problem Cause</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-1">3.2.1. Changes Check</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-2">3.2.2. Network Check</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-3">3.2.3. Isolation of the CDN</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-4">3.2.4. Isolation of the Failover Subsystem</a>
+  <br>&nbsp;&nbsp;
+  <a href="#3-3">3.3. Network Traffic Analysis</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-3-1">3.3.1. Tools for Capturing and Analyzing Network Traffic</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-3-2">3.3.2. Weird Behavior of NGINX Server</a>
+  <br><br>
+  <a href="#4">4. False Failovers</a>
+  <br>&nbsp;&nbsp;
+  <a href="#4-1">4.1. Troubles in HTTP Communication between NGINX and WOWZA</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#4-1-1">4.1.1. False Failovers Caused by the CDN Health Check System</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#4-1-2">4.1.2. False Failovers Caused by non Authorized Clients</a>
+  <br>&nbsp;&nbsp;
+  <a href="#4-2">4.2. Troubles in TCP Communication between NGINX and WOWZA</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#4-2-0">4.2.0. Transmission Control Protocol (notes)</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#4-2-1">4.2.1. NGINX Violates HTTP Specification</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#4-2-2">4.2.2. NGINX Violates TCP Specification</a>
+  <br><br>
+  <a href="#5">5. Incorrect Caching</a>
+  <br><br>
+  <a href="#6">6. Summary</a>
+  <br><br>
+</p>
+
+<hr class="HR2">
+
+
+<h5>&nbsp;Preface</h5>
+
+<p>
+  From time to time at work I have to deal with compatibility issues between software products.
+  Some problems arise because software developers do not anticipate exactly how their product will be used,
+  and users do not fully understand what exactly the software products they work with do.
+  People often rely on a brief description of the product's functionality
+  and simple examples from the "Getting Started" section of the documentation without delving into details.
+  Often this approach actually works.
+  However, when you come across strange and unpredictable behavior on the system that had worked well for a long time
+  and then suddenly broke for no apparent reason, you have to read a vast amount of documentation
+  and do thorough research to get it back up and running.
+</p>
+
+<p>
+  One such case seemed to me remarkable enough to write the note dedicated to it.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="1">1. Brief Description of the System</h2>
+
+<p>
+  Before speaking about the problem itself,
+  a brief introduction is needed to give some ideas of the entities we will be dealing with in this note.
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="1-1">1.1. Basic Requirements for an Architecture of the Video Streaming System</h3>
+
+<p>
+  Let us imagine that we want to have an extremely reliable 24/7 live video streaming system.
+  The system must be so reliable that the failure of one of its components does not lead to the termination of the broadcasting process.
+  The main requirement is that it should be possible to stop any of system components for maintenance,
+  repair or upgrade in a way that it is not noticeable to end users.
+</p>
+
+<p>
+  Obviously these requirements are met by systems with <strong>complete redundancy</strong>.
+</p>
+
+<p>
+  It is quite logical that such a system should consist of two (or more) independent infrastructures
+  for acquisition, processing, encoding, multiplexing and publishing video content.
+  In this particular case, content is delivered to end user devices through a
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Content_delivery_network">content delivery network</a>
+  (CDN) using the
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol">HTTP protocol</a>.
+</p>
+
+<img class="diagrams" src="./pics/1.1.Video-Infrastructures-and-CDN.svg" alt="Block Diagram of the Redundant Infrastructure for Reliable Video Streaming">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 1.1. : Block Diagram of the Redundant Infrastructure for Reliable Video Streaming</em>
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="1-2">1.2. Servers Software</h3>
+
+<p>
+  This note is devoted to the system built on the following software products:
+</p>
+
+<ul>
+  <li>
+    <a target="_blank" href="https://www.wowza.com/streaming-engine">Wowza Streaming Engines</a>
+    is used as a platform for origin servers.
+  </li>
+  <li>
+    <a target="_blank" href="https://www.nginx.com/">NGINX</a>
+    and
+    <a target="_blank" href="https://www.nginx.com/products/nginx/">NGINX Plus</a>
+    are used as a platform for CDN nodes.
+  </li>
+</ul>
+
+<hr class="HR1">
+
+
+<h3 id="1-3">1.3. CDN Key Functionality</h3>
+
+<h4 id="1-3-1">1.3.1. Cache</h4>
+
+<p>
+  CDN reverse proxy servers forward unique HTTP requests from end user clients to origin servers.
+  Responses from the origin servers are returned to clients
+  and at the same time stored in the CDN cache for the time specified in
+  <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control">the HTTP response headers</a>.
+  Thus, the CDN allows us to serve tens of thousands of clients,
+  while the load on the origin servers remains more or less constant
+  and is equivalent to the load caused by a single client (ideally) per one published stream.
+</p>
+
+
+<h4 id="1-3-2">1.3.2. Security Tokens</h4>
+
+<p>
+  CDN edge servers filter requests from the end users using so called
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Tokenization_(data_security)">tokenization</a> technique.
+  This means that every HTTP request must contain a valid security token in the
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Query_string">URL query string</a> as a parameter.
+  If there is no security token in the request, or the token is invalid (for example, because it has already expired),
+  the CDN edge server responds to the client with a
+  <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403">Forbidden error</a>
+  (<code>HTTP status code 403</code>).
+  This method allows us to restrict access to the content for unauthorized users and protect origin servers from
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Denial-of-service_attack">Denial of Service attacks</a>.
+</p>
+
+
+<h4 id="1-3-3">1.3.3. Load Balancing</h4>
+
+<p>
+  The HTTP load balancing mechanism is based on the principle of distributing client requests between origin servers
+  in accordance with one of the load balancing algorithms.
+  This principle implies that there is a group of origin servers
+  that publish <strong>identical</strong> content. Let's call this group a <em>load balancing group</em>.
+</p>
+
+<p>
+  CDNs built on NGINX servers can also forward client requests to one of the <em>backup servers</em>,
+  which normally do not participate in the load balancing process.
+  It happens when all servers in the load balancing group are considered unhealthy.
+</p>
+
+<p>
+  The difference between the servers of the load balancing group and the backup servers is that
+  the content published by the backup servers may differ from the content published by the servers of the load balancing group
+  <strong>(!)</strong>.
+  For example, backup servers may simply publish a message about the service unavailability due to maintenance or something like this.
+</p>
+
+
+<h4 id="1-3-4">1.3.4. Health Check</h4>
+
+<p>
+  The CDN Health Check System is responsible for temporarily excluding unhealthy origin servers from load balancing.
+  This CDN subsystem monitors network transactions between CDN nodes and servers of the load balancing group,
+  collects information about some special events at the TCP and HTTP layers,
+  and determines whether a particular origin server is considered healthy or not.
+</p>
+
+<p>
+  Logic dictates that monitoring of transactions initiated by end users should be sufficient for this purpose.
+  However, the NGINX developers have added an
+  <a target="_blank" href="https://docs.nginx.com/nginx/admin-guide/load-balancer/http-health-check/">active health check</a> feature
+  to NGINX Plus servers.
+  This means that some CDN servers periodically send special health check requests to the origin servers
+  to generate responses that can be verified.
+</p>
+
+<p>
+  For more details read the
+  <a target="_blank" href="https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/">NGINX documentation</a>.
+</p>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Note:</h5>
+
+<p>
+  At this point, I would like to emphasize that a live streaming application does not generate unique data for each client.
+  Instead, it generates only one data stream, which is cached by the CDN servers.
+  Thus, the load is balanced by the data caching mechanism.
+  In addition, two (or more) origin servers cannot be combined into a load balancing group
+  for the reason that they are elements of different infrastructures
+  and generate data streams that are actually different from each other.
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="1-4">1.4. Providing Fault Tolerance for the Streaming System</h3>
+
+<h4 id="1-4-1">1.4.1. Actual Failover Implementation</h4>
+
+<p>
+  The ability of the system to continue operating uninterrupted despite the failure of its individual components
+  is provided by the failover mechanism described in
+  <a href="#1-3-3">Section 1.3.3.</a>.
+</p>
+
+<p>
+  As shown on the <em>Figure 1.1</em>,
+  <strong>Origin 1</strong> is a main server, the only server in the load balancing group,
+  and
+  <strong>Origin 2</strong> is a backup server.
+</p>
+
+<p>
+  When the CDN Health Check System determines that
+  the <strong>Origin 1</strong> server is unavailable or has failed,
+  the CDN entry point servers start forwarding user requests to
+  the <strong>Origin 2</strong> server.
+  This CDN feature allows us to handle network issues and, if necessary,
+  disable one of the origin infrastructures without stopping the streaming process.
+</p>
+
+
+<h4 id="1-4-2">1.4.2. Failover Triggers</h4>
+
+<p>
+  The following is a set of criteria indicating that the origin server should be temporarily marked as inactive (or unhealthy):
+</p>
+
+<ul>
+  <li>TCP connection error</li>
+  <li>TCP connection timeout</li>
+  <li>HTTP status 502 (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/502">Bad Gateway</a>)</li>
+  <li>HTTP status 503 (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503">Service Unavailable</a>)</li>
+  <li>HTTP status 504 (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/504">Gateway Timeout</a>)</li>
+</ul>
+
+<p>
+  In general, this set is not strict. However, a discussion of other possible criteria is beyond the scope of this note.
+</p>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Examples:</h5>
+
+<p>
+  If it is necessary the CDN to forward HTTP requests to only one of the origin servers,
+  the access to the second origin server should be restricted using a firewall.
+  The Linux kernel firewall can be used for this purpose as a simple option.
+</p>
+
+<pre>
+  <code>
+    iptables -A INPUT -p tcp ! -s 127.0.0.1 --dport 1935 -j REJECT
+  </code>
+</pre>
+
+<p>
+  This command adds a rule for the kernel to temporarily reject TCP connections on port 1935 from everywhere except itself.
+</p>
+
+<pre>
+  <code>
+    iptables -D INPUT -p tcp ! -s 127.0.0.1 --dport 1935 -j REJECT
+  </code>
+</pre>
+
+<p>
+  This command deletes the rule that was added by the command in previous example.
+</p>
+
+<p>
+  <a target="_blank" href="https://linux.die.net/man/8/iptables">iptables man page</a><br>
+  <a target="_blank" href="https://linux.die.net/man/8/iptables-save">iptables-save man page</a><br>
+  <a target="_blank" href="https://linux.die.net/man/8/iptables-restore">iptables-restore man page</a><br>
+</p>
+
+<p>
+  If you need to reboot the server and keep the firewall rules,
+  they should be saved before the reboot and restored after the reboot.
+  Here are some good notes on this topic:<br>
+  <a target="_blank" href="https://wiki.debian.org/iptables">iptables - Debian wiki page</a><br>
+  <a target="_blank" href="https://linuxconfig.org/how-to-make-iptables-rules-persistent-after-reboot-on-linux">How to make iptables persistent after reboot on Linux</a><br>
+</p>
+
+<hr class="HR2">
+
+
+<p>
+  &nbsp;&#x1F412;&nbsp;At first glance, this design looks very reliable.
+  And, probably, it would be so if all the components of this system were built within the framework of one integral project.<br>
+  &nbsp;&#x1F98D;&nbsp;However, in real life, this system was assembled from independent components that are not fully compatible and,
+  as it turns out, do not work consistently.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="2">2. Known Issues</h2>
+
+<hr class="HR1">
+
+
+<h3 id="2-1">2.1. Incompatibility of the HLS Protocol and Failover Principles</h3>
+
+<p>
+  As you probably know, HTTP Live Streaming is done by publishing sequences of media segments and playlists
+  that contain the URIs of the media segments and the special tags needed to control the playback process.
+</p>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc8216#section-3">RFC-8216 (Section 3)</a>
+  states as follows:
+</p>
+
+<blockquote>
+  Each segment in a Media Playlist has a unique integer Media Sequence Number.
+  The Media Sequence Number of the first segment in the Media Playlist is either 0 or declared in the Playlist.
+  The Media Sequence Number of every other segment is equal to the Media Sequence Number of the segment that precedes it plus one.
+</blockquote>
+
+<blockquote>
+  Each Media Segment MUST carry the continuation of the encoded bitstream
+  from the end of the segment with the previous Media Sequence Number,
+  where values in a series such as timestamps and Continuity Counters MUST continue uninterrupted.
+  The only exceptions are the first Media Segment ever to appear in a Media Playlist and Media Segments
+  that are explicitly signaled as discontinuities.
+  Unmarked media discontinuities can trigger playback errors.
+</blockquote>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc8216#section-6.2.2">RFC-8216 (Section 6.2.2)</a>
+  states as follows:
+</p>
+
+<blockquote>
+  If Media Segments are to be removed, the Playlist file MUST contain an <code>EXT-X-MEDIA-SEQUENCE</code> tag.
+  Its value MUST be incremented by 1 for every Media Segment that is removed from the Playlist file;
+  it MUST NOT decrease or wrap.
+</blockquote>
+
+<p>
+  Once again, the value of <code>EXT-X-MEDIA-SEQUENCE</code> tag <span class="Pink">MUST NOT decrease or wrap</span>.
+</p>
+
+<p>
+  It should be noted once again that <strong>Origin 1</strong> and <strong>Origin 2</strong> are elements
+  of completely independent infrastructures, and, as a result, they publish <strong>different</strong> sequences of media segments.
+  Thus, when the CDN switches from one origin to another, the client detects that the HLS sequence has changed.
+  Depending on whether the HLS sequence changes upward or downward, two situations are possible,
+  but both of them inevitably lead to a playback error.
+</p>
+
+<img class="diagrams" src="./pics/2.1.HLS-OriginFailover-issue-1.svg" alt="Switching CDN to an alternative origin server results in playback errors for live HLS streams">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 2.1.(1) : Switching CDN to an alternative origin server results in playback errors for live HLS streams</em>
+</p>
+
+<img class="diagrams" src="./pics/2.1.HLS-OriginFailover-issue-2.svg" alt="Switching CDN to an alternative origin server results in playback errors for live HLS streams">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 2.1.(2) : Switching CDN to an alternative origin server results in playback errors for live HLS streams</em>
+</p>
+
+
+<h5>&nbsp;Possible Solution:</h5>
+
+<p>
+  Theoretically, such errors can be avoided
+  if <strong>all</strong> media playlists contain the <code>EXT-X-DISCONTINUITY</code> tag.
+  (<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc8216#section-4.3.2.3">RFC-8216 section-4.3.2.3</a>).
+  Perhaps, it can be done using
+  <a target="_blank" href="https://www.wowza.com/docs/how-to-add-custom-playlist-headers-to-apple-hls-manifests">cupertinoManifestHeaders</a>
+  property of the Wowza <strong>LiveStreamPacketizer</strong> module on <strong>Origin 1</strong> and <strong>Origin 2</strong>.
+</p>
+
+<p>
+  At the time of writing this note, the specified feature has not been implemented in the described system.
+  This approach has NOT been experimentally tested.
+</p>
+
+
+<h5>&nbsp;Update (4607):</h5>
+
+<p>
+  After a closer look at the documentation and some experimental efforts,
+  I have come to the conclusion that this approach cannot be used to solve this particular problem.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="3">3. The Playback Issue</h2>
+
+<hr class="HR1">
+
+
+<h3 id="3-1">3.1. Expectations vs Reality</h3>
+
+<h5>&nbsp;Expectations:</h5>
+
+<p>
+  When designing the streaming system architecture,
+  I assumed that the CDN would switch between origins very infrequently.
+  This assumption was based on the fact that the origin servers and communication channels in general are highly reliable,
+  and the CDN services work exactly as explained by sales managers and technical support specialists of the service provider.
+</p>
+
+<p>
+  &nbsp;&#x1F412;&nbsp;I considered it acceptable that end users would need to restart their media players
+  when there was a fire or flood, or the dude on the backhoe broke the optical communication cable.
+</p>
+
+
+<h5>&nbsp;Reality:</h5>
+
+<p>
+  For three years everything looked as if I were not mistaken.
+  As expected, the system worked stably,
+  with the exception of very rare and very short incidents that were not noticeable to end users.
+</p>
+
+<p>
+  But one day something happened that made it impossible to play streams longer than five minutes!
+  <span class="Pink"><strong>(!)</strong></span><br>
+  No regularity in these events was observed.
+  Sometimes they were not observed for several hours, and sometimes they occurred several times within a minute.
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="3-2">3.2. Efforts to Identify the Malfunctioning Subsystem</h3>
+
+<h4 id="3-2-0">3.2.0. Identification of the Problem Cause</h4>
+
+<p>
+  A superficial analysis of the situation showed
+  that most of the playback errors occur as a result of CDN failovers to the backup origin server.
+</p>
+
+
+<h4 id="3-2-1">3.2.1. Changes Check</h4>
+
+<p>
+  CDN technical support specialists claimed that
+  no changes were made on their part to the configuration of services, as well as to software and hardware.
+  On the other hand, I knew that there were no changes on the side of the origin servers either.
+</p>
+
+
+<h4 id="3-2-2">3.2.2. Network Check</h4>
+
+<p>
+  Several network health check tests have shown that communication channels work reliably.<br>
+  The <a target="_blank" href="https://traceroute.sourceforge.net/">Traceroute</a> utility for Linux was used
+  to collect statistics on TCP packet loss and network latency.
+  The following command was run at intervals of a few seconds for about one week.
+</p>
+
+<pre>
+  <code>
+    traceroute --tcp -n -q 1 -w 1 DESTINATION_IP
+  </code>
+</pre>
+
+<p>
+  The connectivity between origin servers and CDN servers has been tested using this method in both directions.
+  Collected data were analyzed and it turned out that the number of lost packets is vanishingly small.
+  Therefore, I concluded that there are no failures at the network layer that could cause the troubles.
+</p>
+
+
+<h4 id="3-2-3">3.2.3. Isolation of the CDN</h4>
+
+<p>
+  The operability of the HLS streaming system, with the exception of the CDN, was verified using playback tests.<br>
+  Clients connected directly to the origin servers from several different remote locations in the world
+  and played the streams continuously for several days without any hiccups.
+</p>
+
+
+<h4 id="3-2-4">3.2.4. Isolation of the Failover Subsystem</h4>
+
+<p>
+  The operability of the HLS streaming system including CDN,
+  with the exception of the failover mechanism (no backup server), was verified using playback tests.<br>
+  Clients connected to the origin servers via CDN
+  and played the streams continuously for several days without any hiccups.
+</p>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Conclusions:</h5>
+
+<p>
+  Based on the tests above,
+  I have concluded that the issue is caused not by infrastructure changes or network outages,
+  but by a malfunction in the CDN failover mechanism.
+</p>
+
+<p>
+  Unfortunately,
+  the CDN support specialists were unable to find out the reasons for what was happening
+  and, as a result, could not offer any adequate solution to the problem.
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="3-3">3.3. Network Traffic Analysis</h3>
+
+<h4 id="3-3-1">3.3.1. Tools for Capturing and Analyzing Network Traffic</h4>
+
+<p>
+  At this stage, it became clear
+  that I am dealing with some <strong>miscommunication</strong> between the origin servers
+  (<a href="#1-2">Wowza Streaming Engine</a>) and the CDN Health Check System (<a href="#1-2">NGINX</a>).
+</p>
+
+<p>
+  Hoping to clarify the situation,
+  I decided to analyze the TCP streams during which the triggers described in
+  <a href="#1-4-2">section 1.4.2</a> were activated.
+  To collect data for further analysis, the network traffic has been recorded between the CDN and the origin servers,
+  and simultaneously between the client device and the CDN edge,
+  while a test video stream has been played on the client device.
+</p>
+
+<p>
+  These tests were carried out using the powerful and informative tools for capture and analysis of network traffic:
+</p>
+
+<ul>
+  <li>
+    <a target="_blank" href="https://www.tcpdump.org/">tcpdump</a>
+    (CLI packet analyzer) was used to capture network traffic in Linux OS.
+  </li>
+  <li>
+    <a target="_blank" href="https://www.wireshark.org/">TShark</a>
+    (CLI network protocol analyzer) was used to capture network traffic in Windows OS.
+  </li>
+  <li>
+    <a target="_blank" href="https://www.wireshark.org/">Wireshark</a>
+    (GUI network protocol analyzer) was used to analyze TCP packets carrying HTTP traffic.
+  </li>
+</ul>
+
+<br>
+
+<h5>&nbsp;Examples:</h5>
+
+<hr class="HR1">
+
+
+<h6 id="tcpdump">&nbsp;&nbsp;tcpdump</h6>
+
+<pre>
+  <code>
+    tcpdump \
+      -i NET_INTERFACE \
+      -n \
+      -w FILE_NAME.pcap \
+      -C 100 \
+      -W 1000 \
+      net \
+        CDN_NET_1_IP/MASK_1 \
+        or
+        CDN_NET_2_IP/MASK_2 \
+        or \
+      host 
+        TEST_HOST_IP
+  </code>
+</pre>
+
+<p>
+  Here is what this command means:
+  <code>tcpdump</code>, please, capture link-layer frames
+  that are being transmitted and received via specified network interface (<code>-i NET_INTERFACE</code>),
+  do not convert IP addresses to host names (<code>-n</code>),
+  write packets to a <a target="_blank" href="https://pcapng.com/">PcapNG-format</a> file
+  with the specified name (<code>-w FILE_NAME.pcap</code>) rather than parsing and printing them out,
+  save data to multiple files that are not much larger than 100 millions bytes (<code>-C 100</code>),
+  do not create more than 1000 files (<code>-W 1000</code>), just overwrite oldest ones,
+  keep only those packets that are received from or sent to hosts from
+  the specified networks (<code>net CDN_NET_1_IP/MASK_1 or CDN_NET_2_IP/MASK_2</code>)
+  or the specified single host (<code>or host TEST_HOST_IP</code>).
+</p>
+
+<p>
+  <a target="_blank" href="https://www.tcpdump.org/manpages/tcpdump.1.html">tcpdump man page</a>
+</p>
+
+
+<h5>&nbsp;Note:</h5>
+
+<p>
+  Due to the fact that access to network traffic can be used by unscrupulous programs for their insidious purposes,
+  operating systems confines user applications to have access to this resource (and to all system resources in general).
+  In my particular case, the operating system uses the <a target="_blank" href="https://apparmor.net/">AppArmor</a> framework
+  to control access to its resources.<br>
+  <a target="_blank" href="https://wiki.debian.org/AppArmor">AppArmor in Debian wiki</a><br>
+  <a target="_blank" href="https://debian-handbook.info/browse/stable/sect.apparmor.html">AppArmor in Debian Admin Handbook</a>
+</p>
+
+<p>
+  Without going into details, in order to allow <code>tcpdump</code> to intercept network traffic,
+  it is necessary to disable the restrictive <code>AppArmor</code> profile for <code>tcpdump</code> as follows:
+</p>
+
+<pre>
+  <code>
+    apparmor_parser -R /etc/apparmor.d/usr.sbin.tcpdump
+  </code>
+</pre>
+
+<p>
+  <small><em>(The path where tcpdump is installed may be different in your operating system.)</em></small>
+</p>
+
+<p>
+  <a target="_blank" href="https://man.archlinux.org/man/apparmor_parser.8.en">apparmor_parser man page</a>
+</p>
+
+<hr class="HR1">
+
+
+<h6 id="wireshark">&nbsp;Wireshark</h6>
+
+<pre>
+  <code>
+    "C:\Program Files\Wireshark\tshark.exe" ^
+      -i \Device\NPF_{GUID_OF_YOUR_NPF} ^
+      -n ^
+      -w FILE_NAME.pcap ^
+      -b filesize:100000 ^
+      -b files:20 ^
+      host ^
+        CDN_EDGE_NAME_OR_IP ^
+        or ^
+        ORIGIN_1_IP ^
+        or ^
+        ORIGIN_2_IP
+  </code>
+</pre>
+
+<p>
+  Here is what this command means:
+  <code>tshark</code>, please, capture link-layer frames
+  that are being transmitted and received via specified network interface (<code>-i \Device\NPF_{GUID_OF_YOUR_NPF}</code>),
+  do not convert IP addresses to host names (<code>-n</code>),
+  write packets to a <a target="_blank" href="https://pcapng.com/">PcapNG-format</a> file
+  with the specified name (<code>-w FILE_NAME.pcap</code>),
+  save data to multiple files that are not much larger than 100 000 kilobytes (<code>-b filesize:100000</code>),
+  do not create more than 20 files (<code>-b files:20</code>), just overwrite oldest ones,
+  keep only those packets that are received from or sent to the specified hosts
+  (<code>host CDN_EDGE_NAME_OR_IP or ORIGIN_1_IP or ORIGIN_2_IP</code>).
+</p>
+
+<p>
+  The network interface in the command above is a string that looks something like this - <br>
+  <code>\Device\NPF_{780B1DA2-3A9D-48C4-9334-A1944F95614C}</code>.<br>
+  The part <code>780B1DA2-3A9D-48C4-9334-A1944F95614C</code>
+  is the GUID (Globally Unique ID) of NPF (Network Packet Filter).<br>
+  &nbsp;&#x1F996;&nbsp;Oh yeah! Microsoft loves this kind of balderdash!&nbsp;&#x1F440;
+</p>
+
+<p>
+  Long story short, just check the list of interfaces on which
+  <a target="_blank" href="https://www.wireshark.org/docs/wsug_html/#AppToolstshark">TShark</a>
+  can capture as follows:
+</p>
+
+<pre>
+  <code>
+    "C:\Program Files\Wireshark\tshark.exe" -D
+  </code>
+</pre>
+
+<p>
+  <a target="_blank" href="https://www.wireshark.org/docs/man-pages/tshark.html">TShark man page</a><br>
+  <a target="_blank" href="https://www.wireshark.org/docs/man-pages/">Wireshark man pages</a><br>
+  <a target="_blank" href="https://www.wireshark.org/docs/wsug_html/">Wireshark User's Guide</a>
+</p>
+
+
+<h5>&nbsp;Note:</h5>
+
+<p>
+  By the way, to be able to work with these programs,
+  you must have <strong>Administrator</strong> privileges in Windows OS
+  and <strong>root</strong> privileges in Linux OS.
+</p>
+
+<hr class="HR1">
+
+
+<h4 id="3-3-2">3.3.2. Weird Behavior of NGINX Server</h4>
+
+<p>
+  As the first result of the collected data analysis,
+  several unexpected strange features of NGINX servers behavior were revealed.
+</p>
+
+<ul>
+  <li>
+    NGINX stops sending packets inside an open TCP connection without closing it,
+    but opens a new TCP connection for further communication.<br>
+    &nbsp;&#x1F412;&nbsp;It is hard to imagine that there is any adequate reason to do so.
+  </li>
+  <li>
+    NGINX opens and closes many very short TCP connections that serve only one or two HTTP requests.<br>
+    &nbsp;&#x1F412;&nbsp;This seems to be a very wasteful way of using resources to control network traffic.
+  </li>
+</ul>
+
+<p>
+  This behavior looks weird, but does not lead to any critical consequences, at least for low-loaded systems.
+</p>
+
+<p>
+  However, some other features cause events that the CDN Health Check System falsely interprets as
+  an <span class="Pink">unhealthy state</span> of the origin servers or the communication channels.
+</p>
+
+<p>
+  In the next sections, I will discuss several of these phenomena.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="4">4. False Failovers</h2>
+
+<hr class="HR1">
+
+
+<h3 id="4-1">4.1. Troubles in HTTP Communication between NGINX and WOWZA</h3>
+
+<h4 id="4-1-1">4.1.1. False Failovers Caused by the CDN Health Check System</h4>
+
+<p>
+  The engineer's intuition tells that HTTP requests from <strong>different clients</strong>
+  should be transferred by reverse proxy servers to origin servers on <strong>different TCP streams</strong>.
+  At least it seems logical to me. In fact, this is exactly what happens in the vast majority of cases.
+</p>
+
+<p>
+  However, as it turned out,
+  sometimes NGINX reverse proxy servers pass HTTP requests from <strong>different clients</strong>
+  within the <strong>same TCP connection</strong>
+  <span class="Pink"><strong>(!)</strong></span>.
+  In some special cases, this leads to
+  the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/504">Gateway Timeout errors</a>
+  (<code>HTTP status code 504</code>) generated by the CDN entry point servers.
+</p>
+
+
+<h5>&nbsp;Here is what happens:</h5>
+
+<p>
+  By default, the CDN Health Check System requests the root URL of the origin server.<br>
+  <code>"GET / HTTP/1.1"</code>
+</p>
+
+<p>
+  The WOWZA origin server typically responds to such a request with a short HTML document
+  containing information about itself (the software name, version and build number).
+  This works when an HTTP request from the CDN Health Check System is sent within an individual TCP connection
+  or at the very beginning of the TCP stream, which is then used for an HLS data exchange.
+</p>
+
+<p>
+  But if such a request from the CDN Health Check System comes after
+  the HLS communication has already begun in the current TCP stream,
+  then WOWZA does <strong>not</strong> respond to this request
+  <span class="Pink"><strong>(!)</strong></span>.
+  The NGINX entry point server then closes the TCP connection after a 5 second timeout
+  and responds with HTTP status code 504 to the CDN Health Check System.
+  Although the HLS data exchange between NGINX and WOWZA continues over other TCP connections,
+  the CDN Health Check System, upon receiving the Gateway Timeout error from the entry point server,
+  initiates a <a href="#1-4">CDN failover</a> to the backup origin server.
+</p>
+
+<img class="diagrams" src="./pics/4.1.1.HTTP-504-by-HealthCheck.svg" alt="Here is an example of how NOT to check the HTTP server health.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 4.1.1.(1) : Here is an example of how <strong>not</strong> to check the HTTP server health.</em>
+</p>
+
+
+<h5>&nbsp;&#x2705;&nbsp;Workaround:</h5>
+
+<p>
+  To resolve this issue,
+  the CDN Health Check System has been configured to request the file <em>crossdomain.xml</em>.<br>
+  <code>"GET /crossdomain.xml HTTP/1.1"</code>
+</p>
+
+<p>
+  This file (<em>crossdomain.xml</em>) is intended for use by
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Adobe_Flash">Adobe Flash</a> and
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Microsoft_Silverlight">Microsoft Silverlight</a> applications.
+  Although both of these platforms are discontinued and no longer supported by browsers,
+  WOWZA still provides compatibility with them.
+  And surprisingly, WOWZA always responds to such HTTP requests
+  <span class="Green"><strong>(!)</strong></span>.
+</p>
+
+<img class="diagrams" src="./pics/4.1.1.HTTP-504-Workaround.svg" alt="WOWZA always responds to the magic word - crossdomain.xml">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 4.1.1.(2) : <code>crossdomain.xml</code> is a magic word for WOWZA.</em>
+</p>
+
+<p>
+  After applying this fix, the quality of CDN services was improved, but not significantly.
+  In percentage rate, there are significantly fewer such events than those that are described in the next section.
+</p>
+
+
+<h5>&nbsp;Comments:</h5>
+
+<p>
+  The issue described in this section is a consequence of the simultaneous manifestation
+  of two strange features of the NGINX server software such as
+  an active health check and
+  a tendency to transfer HTTP requests from different clients within the same TCP connection.
+</p>
+
+<p>
+  Here is my humble opinion on the matter:
+</p>
+
+<ul>
+  <li>
+    The <a href="#1-3-4">active health check</a> is
+    an <a target="_blank" href="https://en.wikipedia.org/wiki/Overengineering">overengineering</a> feature.<br>
+    &nbsp;&#x1F98D;&nbsp;It is an overkill that has no practical meaning.
+    At least I do not see any additional benefits from this functionality in comparison with
+    a passive health check (verification of responses to requests from ordinary clients).
+  </li>
+  <li>
+    Sharing the same TCP connection between requests from different clients is an architectural mistake.<br>
+    &nbsp;&#x1F98D;&nbsp;The only benefit of passing HTTP requests from different clients within the same TCP connection is
+    to save the resources needed to manage multiple TCP connections.
+    However, given how wasteful this resource is used to manage a huge number of ultra-short connections
+    and to create new connections without a pressing need (as described in <a href="#3-3-2">section 3.3.2.</a>),
+    this type of the TCP connection sharing seems completely pointless.
+  </li>
+</ul>
+
+
+<h4 id="4-1-2">4.1.2. False Failovers Caused by non Authorized Clients</h4>
+
+<p>
+  Despite the fix described above, this was not the end of story.<br>
+  As it turned out, significant number of the failover events were triggered by
+  the same mechanism as described in <a href="#4-1-1">section 4.1.1.</a>,
+  with the only difference that
+  malicious HTTP requests were forwarded to the origin servers from unauthorized external clients.<br>
+  And of course, they were left unresponded.
+</p>
+
+<p>
+  These were requests like the following:<br>
+  <code>"GET / HTTP/1.1"</code><br>
+  <code>"GET /favicon.ico HTTP/1.1"</code><br>
+  <code>"GET /server-status HTTP/1.1"</code><br>
+  <code>"GET /manager/html HTTP/1.1"</code><br>
+  <code>"GET /sitemap.xml HTTP/1.1"</code><br>
+  <code>"GET /.well-known/security.txt HTTP/1.1"</code><br>
+  and so on.
+</p>
+
+
+<h5>&nbsp;&#x1F6A9;&nbsp;Security Issue:</h5>
+
+<p>
+  Suddenly, I discovered that
+  the filtering process based on <a href="#1-3-2">security tokens</a> was applied <strong>not</strong> to all requests
+  <span class="Pink"><strong>(!)</strong></span> as I expected,
+  but only to those that match some regular expression describing URI-s of an HLS playlists.
+</p>
+
+<p>
+  So anyone on the Internet could send an arbitrary request to the CDN edge server,
+  and the CDN would forward that request to one of the origin servers.
+</p>
+
+<p>
+  Obviously, this vulnerability could be exploited to perform a
+  <a target="_blank" href="https://en.wikipedia.org/wiki/Denial-of-service_attack">DoS attack</a>.
+</p>
+
+<img class="diagrams" src="./pics/4.1.2.HTTP-504-by-UnauthorizedClients.svg" alt="Here is an example of how NOT to configure filtering of incoming requests.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 4.1.2. : Here is an example of how <strong>not</strong> to configure filtering of incoming requests.</em>
+</p>
+
+
+<h5>&nbsp;&#x2705;&nbsp;Solution:</h5>
+
+<p>
+  To resolve this issue, the CDN security subsystem was configured to use <em>global tokenization</em> approach.
+</p>
+
+<p>
+  This means that the CDN should only forward requests to origin servers
+  if they contain a valid token as one of the parameters in
+  an <a target="_blank" href="https://en.wikipedia.org/wiki/Query_string">URI query string</a>.
+  If there is no security token in the HTTP request, or the token is invalid (e.g., expired),
+  the CDN edge server should respond to the client with
+  a <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403">Forbidden error</a>
+  (<code>HTTP status code 403</code>).<br>
+  &nbsp;&#x1F41D;&nbsp;Actually, this should have been done from the very beginning (by default)!
+</p>
+
+<p>
+  After applying this fix, quality of the CDN services was restored to acceptable level.
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="4-2">4.2. Troubles in TCP Communication between NGINX and WOWZA</h3>
+
+<p>
+  &nbsp;&#x2728;&nbsp;Probably the most interesting part in this article.
+</p>
+
+
+<h4 id="4-2-0">4.2.0. Transmission Control Protocol (notes)</h4>
+
+<p>
+  I assume the reader has at least a basic understanding of the TCP protocol.<br>
+  Here are the links to the protocol specification:<br>
+</p>
+
+<p>
+  &nbsp;<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc9293">RFC 9293</a><br>
+  &nbsp;<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc793">RFC 793</a> (obsolete)
+</p>
+
+<p>
+  &nbsp;<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc9293#name-header-format">TCP Header Format</a><br>
+  &nbsp;<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc9293#name-state-machine-overview">State Machine Overview</a><br>
+  &nbsp;<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc9293#name-user-tcp-interface">User/TCP Interface</a>
+</p>
+
+<p>
+  Here is a list of control bits (also known as flags) that are mentioned in this note:
+  <br>&nbsp;<code>ACK</code> - Acknowledgment field is significant.
+  <br>&nbsp;<code>PSH</code> - Push function (TCP packet contains payload).
+  <br>&nbsp;<code>RST</code> - Reset the connection.
+  <br>&nbsp;<code>FIN</code> - No more data from sender.
+</p>
+
+
+<h4 id="4-2-1">4.2.1. NGINX Violates HTTP Specification</h4>
+
+<p>
+  During this research,
+  I discovered another mechanism that causes spurious failover events caused by a <a href="#1-4-2">TCP connection error</a>.
+</p>
+
+<p>
+  The vast majority of TCP connections that the NGINX server opens to communicate with the WOWZA server are
+  closed by the WOWZA server after the NGINX server stops sending packets over the open TCP connection
+  (as described in <a href="#3-3-2">section 3.3.2.</a>).
+  To close an unused TCP connection, the WOWZA server sends a TCP packet containing
+  the <strong><code>FIN</code></strong> flag to the NGINX server after a 9 second timeout.
+</p>
+
+<p>
+  Normally, the NGINX server responds with a packet containing
+  <strong><code>ACK</code></strong> and <strong><code>FIN</code></strong> flags,
+  thereby acknowledging the <strong><code>FIN</code></strong> packet from the WOWZA server,
+  and closing connections on its side.
+</p>
+
+<p>
+  However, in some rare cases, the NGINX server responds in very unusual way.
+  It sends a packet that contains an <strong><code>ACK</code></strong> flag,
+  acknowledging the <strong><code>FIN</code></strong> packet from the WOWZA server,
+  and also a <strong><code>PSH</code></strong> flag,
+  which means that this packet contains an HTTP request as a payload.
+</p>
+
+<hr class="HR1">
+
+
+<p>
+  &nbsp;&nbsp;At this point, the logical collision arises in communication!&nbsp;<span class="Pink"><strong>(!)</strong></span>
+</p>
+
+<p>
+  On the one hand, the WOWZA server has already informed the NGINX server that
+  there will be <strong>no more data from sender</strong> over current TCP connection.
+</p>
+
+<p>
+  On the other hand, the WOWZA server <strong>must respond</strong> to the HTTP request
+  from the NGINX server over this TCP connection.
+</p>
+
+<hr class="HR1">
+
+
+<p>
+  Apparently, in the event of such collisions,
+  the WOWZA server must terminate the current TCP connection immediately and
+  send a TCP packet containing the <strong><code>RST</code></strong> flag to the NGINX server,
+  thereby informing the other side that the TCP connection that was used does not exist.
+  In fact, that is exactly what happens.
+</p>
+
+
+<h5>&nbsp;&#x1F6A9;&nbsp;Another reason for false failover:</h5>
+
+<p>
+  The reset of the TCP connection by the origin server is
+  a <a href="#1-4-2">trigger</a> for the CDN failover to the backup origin server (TCP connection error).
+  It should be emphasized that this is quite logical and <strong>correct</strong>,
+  since a reset of the TCP connection usually indicates a problem in the network.
+</p>
+
+<img class="diagrams" src="./pics/4.2.1.TCP-RESET-by-WOWZA.svg" alt="Here is an example of how NOT to send HTTP requests.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 4.2.1. : Here is an example of how <strong>not</strong> to send HTTP requests.</em>
+</p>
+
+
+<p>
+  Technically, this behavior of NGINX servers does not violate the TCP protocol specification.
+</p>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc9293#section-3.6">RFC-9293</a> states as follows:
+</p>
+
+<blockquote>
+  CLOSE is an operation meaning "I have no more data to send."
+  The notion of closing a full-duplex connection is subject to ambiguous interpretation, of course,
+  since it may not be obvious how to treat the receiving side of the connection.
+  We have chosen to treat CLOSE in a simplex fashion.
+  The user who CLOSEs may continue to RECEIVE until the TCP receiver is told that the remote peer has CLOSED also.
+  <br>...<br>
+  Users must keep reading connections they close for sending until the TCP implementation indicates there is no more data.
+</blockquote>
+
+
+<p>
+  However, the HTTP protocol specification seems to be violated
+  <span class="Pink"><strong>(!)</strong></span>
+  since <strong>the request/response exchange MUST be done within the same TCP connection</strong>.<br>
+  &nbsp;&#x1F412;&nbsp;If, of course, I interpret the documentation correctly.
+</p>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc2616#section-1.4">RFC-2616</a> states as follows:
+</p>
+
+<blockquote>
+  HTTP only presumes a reliable transport; any protocol that provides such guarantees can be used;
+  the mapping of the HTTP/1.1 request and response structures onto the transport data units of the protocol
+  in question is outside the scope of this specification.
+  In HTTP/1.0, most implementations used a new connection for each request/response exchange.
+  In HTTP/1.1, a connection may be used for one or more request/response exchanges,
+  although connections may be closed for a variety of reasons.
+</blockquote>
+
+
+<p>
+  Thus, NGINX servers sometimes provoke TCP errors themselves.<br>
+  &nbsp;&#x1F41E;&nbsp;From my point, this behavior is completely wrong.
+</p>
+
+<p>
+  Unfortunately, this issue cannot be resolved without correcting the NGINX server code.
+</p>
+
+<p>
+  Fortunately, such events happen quite rarely.<br>
+  In this study, their occurrence rate is approximately 1 event per 400 MB of traffic.
+</p>
+
+
+<h5>&nbsp;&#x2705;&nbsp;Workaround:</h5>
+
+<p>
+  Since these events occur quite infrequently, the CDN Health Check System has been configured
+  to react on TCP connection errors only when they occur multiple times over a certain period of time.
+  For example, failover is triggered if TCP connection errors occur ten times within ten seconds.
+</p>
+
+<p>
+  For details read
+  the <a target="_blank" href="https://docs.nginx.com/nginx/admin-guide/load-balancer/tcp-health-check/">TCP Health Checks</a>
+  documentation page.
+</p>
+
+<p>
+  This approach allows us to react properly to the critical events and bypass innoxious ones.
+</p>
+
+
+<h4 id="4-2-2">4.2.2. NGINX Violates TCP Specification</h4>
+
+<p>
+  Sometimes, after the NGINX server closed the TCP connection
+  by sending a packet containing the <strong><code>FIN</code></strong> flag (for no apparent reason),
+  and then the WOWZA server acknowledged this packet and closed the TCP connection on its part by sending
+  a packet containing the <strong><code>ACK</code></strong> and <strong><code>FIN</code></strong> flags,
+  NGINX unexpectedly resets the TCP connection by sending
+  a packet containing the <strong><code>RST</code></strong> flag (instead of the last acknowledgment packet).
+</p>
+
+<p>
+  Based on the TTL values of IP packets carrying regular TCP packets from NGINX servers and
+  the TTL values of IP packets carrying TCP packets containing <strong><code>RST</code></strong> flags,
+  it appears that the reset TCP packets are sent by NGINX servers
+  rather than routers somewhere in between WOWZA and NGINX servers.
+</p>
+
+
+<h5>&nbsp;Note:</h5>
+
+<p>
+  TTL (<a target="_blank" href="https://en.wikipedia.org/wiki/Time_to_live">Time to live</a>) is a field in the header of IP packets.
+</p>
+
+<p>
+  Each router that processes an IP packet decreases its TTL value by 1.
+  Thus, in fast networks, the TTL value can be used to count the number of routers that the IP packet has passed through.
+</p>
+
+<p>
+  Let me quote Wikipedia:
+</p>
+
+<blockquote>
+  In theory, under IPv4 (<a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc791#section-1.4">RFC-791</a>),
+  time to live is measured in seconds, although every host that passes the datagram must reduce the TTL by at least one unit.
+  In practice, the TTL field is reduced by one on every hop.
+  To reflect this practice, the field is renamed hop limit in IPv6.
+</blockquote>
+
+<img class="diagrams" src="./pics/4.2.2.TCP-RESET-by-NGINX.svg" alt="Here is an example of how NOT to close TCP connections.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 4.2.2. : Here is an example of how <strong>not</strong> to close TCP connections.</em>
+</p>
+
+<p>
+  This phenomenon is not critical to the HTTP data delivery process, but it does indicate a problem.
+  <span class="Orange"><strong>(!)</strong></span>
+</p>
+
+<p>
+  &nbsp;&#x1F412;&nbsp;Perhaps this may be a consequence of critical peak loads
+  <span class="Pink"><strong>(?)</strong></span> on NGINX servers,
+  when the operating system kernel urgently needs to free up some of the resources used to manage a specific TCP connection,
+  and it terminates the corresponding process without waiting for the TCP connection to be closed correctly.<br>
+  &nbsp;&#x1F98D;&nbsp;Though the CDN support specialists claimed that there are no such loads.
+</p>
+
+<p>
+  If this phenomenon is not associated with external factors (e.g., lack of CPU resources),
+  then the NGINX server simply violates <span class="Pink"><strong>(!)</strong></span> the TCP specification.
+</p>
+
+<p>
+  Unfortunately, this issue cannot be resolved without correcting the NGINX server code.
+</p>
+
+<p>
+  Fortunately, such events do not happen very often.<br>
+  In this study, their occurrence rate is approximately 1 event per 6 MB of traffic.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="5">5. Incorrect Caching</h2>
+
+<p>
+  In addition to the above,
+  from time to time I observed a large number of
+  the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404">Not Found errors</a>
+  (<code>HTTP status code 404</code>) in a row.
+</p>
+
+<p>
+  Some of these errors are directly related to the events of the CDN failover to the backup origin server.
+  They occur when a playlist request has been processed by one origin server,
+  but a media segment request is being processed by another origin server.
+</p>
+
+<p>
+  However, I also have found the HTTP responses with the 404 Not Found status that were caused by some other reason.
+</p>
+
+<p>
+  I examined requests from the client to the CDN and the corresponding requests from the CDN to the origin servers,
+  and found that a fairly large part of the playlists that the CDN returned from its cache had been already outdated
+  <span class="Pink"><strong>(!)</strong></span>.
+  Upon receiving an outdated playlist, the client requests media segments that may have already been deleted.
+  In such cases, the origin server responds with the 404 Not Found status.
+</p>
+
+<p>
+  The reason for this phenomenon was that, as it turned out, the CDN edge servers ignored
+  the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control">cache control HTTP headers</a>
+  (<code>"Cache-Control: max-age=1"</code>) of the origin server responses.
+  Instead, <span class="Pink">contrary to the requirements <strong>(!)</strong></span> of the HTTP specification,
+  the CDN cache was controlled through some manual settings.
+</p>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc2616#section-14.9">RFC-2616</a> states as follows:
+</p>
+
+<blockquote>
+  The Cache-Control general-header field is used to specify directives
+  that MUST be obeyed by all caching mechanisms along the request/response chain.
+  The directives specify behavior intended to prevent caches from adversely interfering with the request or response.
+  These directives typically override the default caching algorithms.
+</blockquote>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc7234#section-5.2.2.8">RFC-7234 Section 5.2.2.8</a> states as follows:
+</p>
+
+<blockquote>
+  The "max-age" response directive indicates that the response is to be considered stale
+  after its age is greater than the specified number of seconds.
+</blockquote>
+
+<p>
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc7234#section-4.2.4">RFC-7234 Section 4.2.4</a> states as follows:
+</p>
+
+<blockquote>
+  A cache MUST NOT send stale responses unless it is disconnected
+  (i.e., it cannot contact the origin server or otherwise find a forward path) or doing so is explicitly allowed
+  (e.g., by the max-stale request directive;
+  see <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc7234#section-5.2.1">Section 5.2.1</a>).
+</blockquote>
+
+
+<p>
+  After the CDN servers had been configured to meet requirements of the HTTP protocol specification,
+  this 404 error issue disappeared.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="6">6. Summary</h2>
+
+<p>
+  To summarize, I would like to list in one place all the main topics raised in this story.
+</p>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;General topics:</h5>
+
+<ul>
+  <li>
+    Architecture of a reliable video streaming system based on the HLS protocol<br>
+    <a href="#1-1">Section 1.1.</a>
+  </li>
+  <li>
+    CDN capabilities used for HLS streaming<br>
+    <a href="#1-3">Section 1.3.</a>
+  </li>
+  <li>
+    Fundamental difficulties of using two (or more) independent video processing infrastructures in HLS-based streaming systems<br>
+    <a href="#2-1">Section 2.1.</a>
+  </li>
+  <li>
+    Tools and techniques for troubleshooting the transport part of HLS-based streaming systems<br>
+    <a href="#3">Section 3.</a>
+  </li>
+</ul>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Special topics related to the CDN configuration:</h5>
+
+<ul>
+  <li>
+    Dark sides of the CDN Health Check System<br>
+    <a href="#4-1-1">Section 4.1.1.</a>
+    
+    <h6>&nbsp;The Issue:</h6>
+    Some HTTP requests from the Health Check System cause <code>HTTP 504 Gateway Timeout</code> errors.
+    
+    <h6>&nbsp;The Preferable Solution:</h6>
+    It would be nice if NGINX, while acting as a proxy, did not mix HTTP requests from different clients within the same TCP connection.
+    <br>&nbsp;<strong>and / or</strong><br>
+    The active health check method should be abandoned.
+    
+    <h6>&nbsp;The Workaround:</h6>
+    The Health Check System should be configured to send HTTP requests that do not confuse the origin servers.
+    This could be a request to some permanent playlist or some special file.<br>
+    In my particular case the special file was crossdomain.xml.<br>
+    The request that makes magic happen is <code>"GET /crossdomain.xml HTTP/1.1"</code>
+  </li>
+  <br>
+  <li>
+    Incorrect configuration of the Tokenized URL validation service<br>
+    <a href="#4-1-2">Section 4.1.2.</a>
+    
+    <h6>&nbsp;The Issue:</h6>
+    Some HTTP requests from third party clients cause <code>HTTP 504 Gateway Timeout</code> errors.
+    
+    <h6>&nbsp;The Security Issue:</h6>
+    A huge number of requests from unauthorized clients can overload the origin servers.
+    
+    <h6>&nbsp;The Solution:</h6>
+    The Tokenized URL validation service should be configured to validate not only requests to some specific resources
+    (e.g., playlists or media segments) but <strong>all</strong> requests.
+    
+    <h6>&nbsp;Comments:</h6>
+    This issue caused the vast majority of false CDN failovers to the backup origin server.
+    This kind of failovers could have been avoided if the NGINX had not mixed HTTP requests
+    from different clients within the same TCP stream.
+  </li>
+  <br>
+  <li>
+    Incorrect configuration of the CDN cache subsystem<br>
+    <a href="#5">Section 5.</a>
+    
+    <h6>&nbsp;The Issue:</h6>
+    The CDN nodes ignore directives of HTTP responses that control caching and often provide outdated playlists.
+    This naturally results in <code>HTTP 404 Not Found</code> errors when clients request stale media segments.
+    
+    <h6>&nbsp;The Solution:</h6>
+    The CDN should be configured to adhere directives of the <code>Cache-Control</code> response headers.
+  </li>
+</ul>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Special topics related to communication on the HTTP and TCP levels:</h5>
+
+<ul>
+  <li>
+    Inconsistent implementation of how TCP connections are used for HTTP request/response exchanges<br>
+    <a href="#4-2-1">Section 4.2.1.</a>
+    
+    <h6>&nbsp;The Issue:</h6>
+    The NGINX server may arbitrarily send an HTTP request within a TCP connection
+    that has already been closed by the other party, causing the TCP connection to be reset.
+    
+    <h6>&nbsp;The Preferable Solution:</h6>
+    It would be nice if the NGINX developers changed the HTTP implementation
+    to suit common sense and the protocol specification.
+    
+    <h6>&nbsp;The Workaround:</h6>
+    The CDN should be configured so that failover is not triggered by a single TCP connection error,
+    but by multiple identical errors occurring over a certain period of time.
+  </li>
+  <br>
+  <li>
+    Inconsistent implementation of the procedure for closing a TCP connection<br>
+    <a href="#4-2-2">Section 4.2.2.</a>
+    
+    <h6>&nbsp;The Issue:</h6>
+    The NGINX server may randomly reset the TCP connection instead of sending the last acknowledgment packet.
+    
+    <h6>&nbsp;The Preferable Solution:</h6>
+    It would be nice if the NGINX developers fixed the procedure responsible for closing a TCP connection
+    to suit the protocol specification.
+    
+    <h6>&nbsp;Comments:</h6>
+    This issue is completely harmless for HLS purposes. You can safely ignore it.
+  </li>
+</ul>
+
+<hr class="HR2">
+
+<br>
+
+<p>2G - 4600</p>
+
+<br>
+</main>
+</body>
+</html>

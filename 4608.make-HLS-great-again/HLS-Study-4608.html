@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>HLS study 4600</title>
+  <link rel="stylesheet" href="../rack/styles/style-2G.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/2G-Lab/2G-Image-Magnifier/src/magnifier.css">
+  <script src="https://cdn.jsdelivr.net/gh/2G-Lab/2G-Image-Magnifier/src/magnifier.s.js"></script>
+  <script>window.onload = (event) => {new x2G_ImageMagnifier ("diagrams")}</script>
+</head>
+<body>
+<div class="top">
+  <div class="header">Previous note <a href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html">What could be Wrong with HLS</a></div>
+  <div class="header">Back to <a href="https://2g-lab.github.io/2G-Notes/">2G-Notes</a></div>
+</div>
+<main>
+<br>
+
+<h1>Make HLS Great Again</h1>
+
+<hr class="HR2">
+
+<p>
+  <br>
+  <a href="#1">1. Description of the Problem</a>
+  <br><br>
+  <a href="#2">2. Streams from Different Origins in One Playlist</a>
+  <br><br>
+  <a href="#3">3. Publishing and Delivery</a>
+  <br>&nbsp;&nbsp;
+  <a href="#3-1">3.1. Variant 1 - CDN Specific Implementations</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-1-1">3.1.1. CDN for HLS only</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-1-2">3.1.2. Publishing Methods</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-1-3">3.1.3. Master Playlists</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-1-4">3.1.4. Triggers to Use a Redundant Stream</a>
+  <br>&nbsp;&nbsp;
+  <a href="#3-2">3.2. Variant 2 - Hybrid Implementation</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-1">3.2.1. Regular CDN for HTTP content</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-2">3.2.2. Publishing Methods</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-3">3.2.3. Master Playlists</a>
+  <br>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="#3-2-4">3.2.4. Triggers to Use a Redundant Stream</a>
+  <br><br>
+  <a href="#4">4. Switching to a Redundant Stream</a>
+  <br><br>
+  <a href="#0x00">0x00. User Experience First</a>
+  <br><br>
+</p>
+
+<hr class="HR2">
+
+
+<h5>&nbsp; Introduction</h5>
+<p>
+  This is a continuation of
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html">the story</a>
+  about the principles of building a video streaming system based on the HLS protocol.<br>
+  My previous note focused on a
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#6">proper configuration</a>
+  of the Content Delivery Network (CDN) to avoid (or handle) misbehavior of some its subsystems.<br>
+  However, even with a properly configured CDN, one fundamental problem remains
+  - how to provide a good user experience when one of the origin servers becomes unavailable
+  due to some kind of outage, network failure or maintenance.
+</p>
+
+<p>
+  To fully understand what will be discussed, I would recommend you to read sections<br>
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#1">1. Brief Description of the System</a>
+  and
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#2">2. Known Issues</a>.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="1">1. Description of the Problem</h2>
+
+<br>
+
+<p>
+  Let us look at
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#1">the system</a>
+  described in the previous note.
+</p>
+
+<p>
+  The system includes two video infrastructures and a regular CDN for delivery an HTTP content.
+  Exit points of the video infrastructures are servers for publishing HLS streams,
+  known as <strong>origin servers</strong>.
+  Each origin server publishes a master playlist, current media playlist and current collection of media fragments.
+</p>
+
+<br>
+
+<p>
+  <strong>Master playlists</strong>
+  on both servers are the <strong>same</strong> and look something like this:
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    sHD/chunklist.m3u8
+  </code>
+</pre>
+
+<br>
+
+<p>
+  <strong>Media playlists</strong>
+  (chunklists) on each server are <strong>unique</strong> and contain different HLS sequences.<br>
+  HLS sequences in chunklists of different resolutions on the same origin server are identical.
+</p>
+
+<p>
+  For example,
+  the chunklists for FHD, qHD and sHD resolutions that are published at some given moment of time might look like these:
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-TARGETDURATION:2
+    #EXT-X-MEDIA-SEQUENCE:281
+    #EXTINF:2.0,
+    media_281.ts
+    #EXTINF:2.0,
+    media_282.ts
+    #EXTINF:2.0,
+    media_283.ts
+    #EXTINF:2.0,
+    media_284.ts
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>The current chunklist on the <strong>Origin 1</strong></em>
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-TARGETDURATION:2
+    #EXT-X-MEDIA-SEQUENCE:72
+    #EXTINF:2.0,
+    media_72.ts
+    #EXTINF:2.0,
+    media_73.ts
+    #EXTINF:2.0,
+    media_74.ts
+    #EXTINF:2.0,
+    media_75.ts
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>The current chunklist on the <strong>Origin 2</strong></em>
+</p>
+
+<p>
+  At any given time, the CDN receives data from only one of the origin servers.
+  When the CDN switches, for example, from <strong>Origin 1</strong> to <strong>Origin 2</strong>,
+  the client will receive the chunklist that is inconsistent with the previous one.
+  Then the player detects that the HLS sequence has changed downwards <strong>(from 281 to 72)</strong> and,
+  in accordance with the restriction described in
+  the <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc8216#section-6.2.2">RFC-8216</a>,
+  stops downloading media fragments, since it considers the media playlist <strong>invalid</strong>.<br>
+  The playback stops.<br>
+  <span class="Pink">And that is the problem!</span>
+</p>
+
+<hr class="HR1">
+
+
+<p>
+  In next sections I will discuss one of the possible approaches
+  to solve the problem of resuming video playback without user interaction.
+</p>
+
+<p>
+  &nbsp;&#x1F412;&nbsp;Let me note right away that, from my point of view,
+  this is far from the best method to provide a good user experience.<br>
+  However, since this approach is quite simple to implement and widely used in HLS delivery services,
+  it deserves some attention.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="2">2. Streams from Different Origins in One Playlist</h2>
+
+<br>
+
+<p>
+  The essence of the basic idea is that
+  the master playlist contains links to media playlists
+  published by <strong>Origin 1</strong> and <strong>Origin 2</strong> together.
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    origin_1/FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    origin_2/FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    origin_1/qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    origin_2/qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    origin_1/sHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    origin_2/sHD/chunklist.m3u8
+  </code>
+</pre>
+
+<p>
+  Thus, if the current media playlist becomes unavailable, the player should switch to the redundant media playlist.
+</p>
+
+<p>
+  This approach opens up possibilities for many implementation options.
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="3">3. Publishing and Delivery</h2>
+
+<h3 id="3-1">3.1. Variant 1 - The CDN Specific Implementations</h3>
+
+<h4 id="3-1-1">3.1.1. CDN for HLS only</h4>
+
+<p>
+  This solution uses a special CDN configuration customized for the specific task of delivering HLS content.<br>
+  In this configuration, the CDN provides access to both origin servers simultaneously.
+  This means that if both origin servers are accessible and operational,
+  the client can request content from any of them by its choice.
+</p>
+
+<img class="diagrams"  src="./pics/3.1.1.Two-Origins-and-Special-CDN.svg" alt="The CDN specialized for HLS delivery provides access to all origin servers simultaneously.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 3.1.1. : The CDN specialized for HLS delivery provides access to all origin servers simultaneously.</em>
+</p>
+
+
+<h4 id="3-1-2">3.1.2. Publishing Methods</h4>
+
+<p>
+  There are two publishing methods widely used with similar CDN implementations:
+</p>
+
+<ul>
+  <li>
+    <strong>HLS Push</strong> is when the origin server uploads HLS data to the entry point server
+    using the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/PUT">HTTP PUT method</a>.
+  </li>
+  <li>
+    <strong>HLS Pull</strong> is when the entry point server downloads HLS data from the origin server
+    using the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/GET">HTTP GET method</a>.
+  </li>
+</ul>
+
+
+<h4 id="3-1-3">3.1.3. Master Playlists</h4>
+
+<p>
+  The master playlists for these configurations are usually prepared manually
+  and stored directly on the CDN entry point servers.<br>
+  They can contain absolute or relative paths URLs of media playlists.
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    https://cdn.edge.name/hls/live/NickName-of-EntryPoint-1/streamName/FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    https://cdn.edge.name/hls/live/NickName-of-EntryPoint-2/streamName/FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    https://cdn.edge.name/hls/live/NickName-of-EntryPoint-1/streamName/qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    https://cdn.edge.name/hls/live/NickName-of-EntryPoint-2/streamName/qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    https://cdn.edge.name/hls/live/NickName-of-EntryPoint-1/streamName/sHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    https://cdn.edge.name/hls/live/NickName-of-EntryPoint-2/streamName/sHD/chunklist.m3u8
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>An example of the master playlist containing <strong>absolute URL</strong>s.</em><br>
+  &nbsp;&nbsp;<em>Such type of playlists are typically used with the <strong>HLS Push</strong> method.</em>
+</p>
+
+<br>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    NickName-of-Origin-1/streamName/FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,CODECS=&quot;avc1.640028,mp4a.40.2&quot;,RESOLUTION=1920x1080
+    NickName-of-Origin-2/streamName/FHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    NickName-of-Origin-1/streamName/qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,CODECS=&quot;avc1.64001f,mp4a.40.2&quot;,RESOLUTION=960x540
+    NickName-of-Origin-2/streamName/qHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    NickName-of-Origin-1/streamName/sHD/chunklist.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,CODECS=&quot;avc1.640015,mp4a.40.2&quot;,RESOLUTION=480x270
+    NickName-of-Origin-2/streamName/sHD/chunklist.m3u8
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>An example of the master playlist containing <strong>relative URL</strong>s.</em><br>
+  &nbsp;&nbsp;<em>Such type of playlists are typically used with the <strong>HLS Pull</strong> method.</em>
+</p>
+
+<br>
+
+<p>
+  As you understand, the URLs in the playlists here are <strong>not</strong> the actual resource paths.
+  They only pretend to be so.
+  To be able to fetch data from the origin or entry point servers,
+  the CDN must translate the URLs listed in the playlists into actual URLs.
+</p>
+
+
+<h4 id="3-1-4">3.1.4. Triggers to Use a Redundant Stream</h4>
+
+<p>
+  For the client,
+  <strong>HLS Push</strong> and <strong>HLS Pull</strong> implementations differ from each other
+  in the types of errors that the client receives if one of the subsystems fails.
+</p>
+
+<p>
+  Let us look at some obvious examples.
+</p>
+
+
+<h5>&nbsp; &nbsp; HLS Push</h5>
+
+<ul>
+  <li>
+    The origin server stops sending HLS data to the entry point server for any reason
+    (maintenance of the origin server or network components, network failure, etc.).<br>
+    <br>
+    Therefore, the HLS data at the entry point server is not being updated.<br>
+    This will cause the entry point server to respond to the client with
+    a <strong>stale media playlist</strong> or <code>404 status code</code>.
+  </li>
+</ul>
+
+<br>
+
+
+<h5>&nbsp; &nbsp; HLS Pull</h5>
+
+<ul>
+  <li>
+    The origin server has been properly stopped for maintenance.<br>
+    <br>
+    TCP connections from the entry point server may be either REJECTED or DROPPED (bad choice) by the firewall.<br>
+    (For example, as it has been shown
+    <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#1-4-2">here</a>.)<br>
+    <br>
+    If the firewall uses the <code>REJECT</code> rule, it will send
+    a TCP <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc9293#name-reset-processing">RESET</a> packet
+    in response to the entry point attempt to establish a TCP connection with the origin server.<br>
+    In such a case, the entry point server should immediately generate a server-error response containing a <code>503 status code</code>
+    (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503">Service Unavailable</a>)
+    and send it to the client.<br>
+    <br>
+    If the firewall uses the <code>DROP</code> rule, it will simply ignore any incoming TCP packets.
+    This will cause the entry point server, when attempting to establish a TCP connection with the origin server,
+    to wait for some time and then generate a server-error response containing a <code>504 status code</code>
+    (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/504">Gateway Timeout</a>)
+    and send it to the client.<br>
+    In general, the waiting time can be quite long <span class="Pink"><strong>(!)</strong></span>.
+    But in real life, an adequately configured CDN will rarely wait longer than 2 seconds.<br>
+    <br>
+  </li>
+  <li>
+    An HTTP server on the origin server is down.
+  </li>
+  <li>
+    The origin server is turned off.
+  </li>
+  <li>
+    There is no network connection.<br>
+    <br>
+    These situations lead to the same consequences as the <code>DROP</code> firewall rule.<br>
+    <br>
+  </li>
+  <li>
+    The HTTP server on the origin server is running but an encoding process has stopped functioning properly.<br>
+    <br>
+    Since in this case there is no HLS data to publish, when the entry-point server requests this data
+    the origin server will generate a client-error response containing the <code>404 status code</code>
+    (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404">Not Found</a>).
+  </li>
+</ul>
+
+<br>
+
+<p>
+  Of course, there are other possibilities that something goes wrong
+  (problems with DNS records for origin servers, expired SSL certificates, and so on and so forth).<br>
+  There may be malfunctions of the CDN itself.<br>
+  Some CDNs may generate non-standard status codes <span class="Orange"><strong>(!)</strong></span>,
+  something like
+  <a target="_blank" href="https://community.cloudflare.com/t/community-tip-fixing-error-523-origin-is-unreachable/44218">this</a>.
+</p>
+
+<hr class="HR1">
+
+<br>
+
+<p>
+  In general, life is full of surprises.
+  And these surprises can be described by the idea that<br>
+  <span class="Orange">the client received something different, instead of what it expected to receive</span>.<br>
+  Such events must be detected and handled by the HLS player itself or its wrapper application.
+</p>
+
+<p>
+  Note that, unlike the
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#1-3-3">behavior</a>
+  of the regular CDN,<br>
+  the specialized CDN does nothing with the error responses other than forward them to clients.
+</p>
+
+<hr class="HR1">
+
+
+<img class="diagrams" src="./pics/3.1.4.V1-Switching-to-Redundant-Stream.svg" alt="The media player switches to a redundant stream after the encoder has failed.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 3.1.4. : The media player switches to a redundant stream after the encoder has failed.</em><br>
+  <em>(Honestly, I have never seen exactly this event in real life.)</em>
+</p>
+
+<hr class="HR1">
+
+
+<h3 id="3-2">3.2. Variant 2 - The Hybrid Implementation</h3>
+
+<h4 id="3-2-1">3.2.1. Regular CDN for HTTP content</h4>
+
+<p>
+  This solution uses a regular CDN configuration, the same as for any HTTP content.<br>
+  In this configuration, the CDN provides access to the primary origin server
+  and switches to the backup server only in certain circumstances.
+  This means that only one origin server is accessible at some particular moment of time
+  (and you do not know exactly, which one).
+</p>
+
+<img class="diagrams" src="./pics/3.2.1.Two-Origins-and-Regular-CDN.svg" alt="The regular CDN provides access to the currently active origin server.">
+
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 3.2.1. : The regular CDN provides access to the currently active origin server.</em>
+</p>
+
+
+<h4 id="3-2-2">3.2.2. Publishing Methods</h4>
+
+<p>
+  Obviously, there is only one publishing method for such CDN implementation:
+</p>
+
+<ul>
+  <li>
+    <strong>HLS Pull</strong> is when the entry point server downloads HLS data from the origin server
+    using the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods/GET">HTTP GET method</a>.
+  </li>
+</ul>
+
+
+<h4 id="3-2-3">3.2.3. Master Playlists</h4>
+
+<p>
+  The master playlists for this configuration are usually generated dynamically and stored on the origin servers.<br>
+  They must contain relative URLs to media playlists.
+</p>
+
+<p>
+  The requirement to use relative URLs in master playlists is not obvious at first glance.
+  But if we consider the possibility of using several CDNs simultaneously, then it seems natural.
+</p>
+
+<p>
+  It is important that the playlists on both servers must be identical.
+  Thus, each origin server must generate a playlist containing links to the streams that are published on that server
+  as well as the streams that are <strong>not</strong> published on that server.
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,RESOLUTION=1920x1080
+    FHD-chunklist-available-on-Origin-1.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,RESOLUTION=1920x1080
+    FHD-chunklist-available-on-Origin-2.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=960x540
+    qHD-chunklist-available-on-Origin-1.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,RESOLUTION=960x540
+    qHD-chunklist-available-on-Origin-2.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=480x270
+    sHD-chunklist-available-on-Origin-1.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=480x270
+    sHD-chunklist-available-on-Origin-2.m3u8
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>Here is an illustration of what I mean.</em>
+</p>
+
+<hr class="HR1">
+
+
+<p>
+  Let us look at an example of how
+  <a target="_blank" href="https://www.wowza.com/streaming-engine">Wowza Streaming Engine</a>,
+  acting as an origin server, can generate these types of playlists.
+</p>
+
+<p>
+  A standard method to combine several streams with different bitrates into a group
+  for <a target="_blank" href="https://www.wowza.com/docs/how-to-do-adaptive-bitrate-streaming">adaptive bitrate streaming</a>
+  is to use <a target="_blank" href="https://en.wikipedia.org/wiki/Synchronized_Multimedia_Integration_Language">SMIL</a> files.
+</p>
+
+<pre>
+  <code>
+    &lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+    &lt;smil&gt;
+      &lt;body&gt;
+        &lt;switch&gt;
+          &lt;video title=&quot;FHD_Origin_1&quot; src=&quot;Real_FHD_Stream&quot; width=&quot;1920&quot; height=&quot;1080&quot; systemLanguage=&quot;eng&quot; system-bitrate=&quot;3600000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;FHD_Origin_2&quot; src=&quot;Fake_FHD_Stream&quot; width=&quot;1920&quot; height=&quot;1080&quot; systemLanguage=&quot;eng&quot; system-bitrate=&quot;3600000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;qHD_Origin_1&quot; src=&quot;Real_qHD_Stream&quot; width=&quot;960&quot;  height=&quot;540&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;1200000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;qHD_Origin_2&quot; src=&quot;Fake_qHD_Stream&quot; width=&quot;960&quot;  height=&quot;540&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;1200000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;sHD_Origin_1&quot; src=&quot;Real_sHD_Stream&quot; width=&quot;480&quot;  height=&quot;270&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;400000&quot; &gt;&lt;/video&gt;
+          &lt;video title=&quot;sHD_Origin_2&quot; src=&quot;Fake_sHD_Stream&quot; width=&quot;480&quot;  height=&quot;270&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;400000&quot; &gt;&lt;/video&gt;
+        &lt;/switch&gt;
+      &lt;/body&gt;
+    &lt;/smil&gt;
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>The SMIL file to generate the master playlist on <strong>Origin 1</strong>.</em>
+</p>
+
+<pre>
+  <code>
+    &lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+    &lt;smil&gt;
+      &lt;body&gt;
+        &lt;switch&gt;
+          &lt;video title=&quot;FHD_Origin_1&quot; src=&quot;Fake_FHD_Stream&quot; width=&quot;1920&quot; height=&quot;1080&quot; systemLanguage=&quot;eng&quot; system-bitrate=&quot;3600000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;FHD_Origin_2&quot; src=&quot;Real_FHD_Stream&quot; width=&quot;1920&quot; height=&quot;1080&quot; systemLanguage=&quot;eng&quot; system-bitrate=&quot;3600000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;qHD_Origin_1&quot; src=&quot;Fake_qHD_Stream&quot; width=&quot;960&quot;  height=&quot;540&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;1200000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;qHD_Origin_2&quot; src=&quot;Real_qHD_Stream&quot; width=&quot;960&quot;  height=&quot;540&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;1200000&quot;&gt;&lt;/video&gt;
+          &lt;video title=&quot;sHD_Origin_1&quot; src=&quot;Fake_sHD_Stream&quot; width=&quot;480&quot;  height=&quot;270&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;400000&quot; &gt;&lt;/video&gt;
+          &lt;video title=&quot;sHD_Origin_2&quot; src=&quot;Real_sHD_Stream&quot; width=&quot;480&quot;  height=&quot;270&quot;  systemLanguage=&quot;eng&quot; system-bitrate=&quot;400000&quot; &gt;&lt;/video&gt;
+        &lt;/switch&gt;
+      &lt;/body&gt;
+    &lt;/smil&gt;
+  </code>
+</pre>
+
+<p>
+  &nbsp;&nbsp;<em>The SMIL file to generate the master playlist on <strong>Origin 2</strong>.</em>
+</p>
+
+<p>
+  As you can see, there are lines containing <code>Real</code> and <code>Fake</code> names of the source streams.<br>
+  The streams with <code>Real</code> names are incoming streams connected to <code>Wowza Streaming Engine</code>.<br>
+  The streams with <code>Fake</code> names do not exist on servers.<br>
+  The lines with <code>Fake</code> stream names are used in SMIL files to add corresponding lines to the playlists.
+</p>
+
+<p>
+  So, based on these SMIL files each origin server will generate the following master playlist:
+</p>
+
+<pre>
+  <code>
+    #EXTM3U
+    #EXT-X-VERSION:3
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,NAME=&quot;FHD_Origin_1&quot;,RESOLUTION=1920x1080
+    chunklist_b3600000_sleng_HASH-1.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=3600000,NAME=&quot;FHD_Origin_2&quot;,RESOLUTION=1920x1080
+    chunklist_b3600000_sleng_HASH-2.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,NAME=&quot;qHD_Origin_1&quot;,RESOLUTION=960x540
+    chunklist_b1200000_sleng_HASH-3.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=1200000,NAME=&quot;qHD_Origin_1&quot;,RESOLUTION=960x540
+    chunklist_b1200000_sleng_HASH-4.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,NAME=&quot;sHD_Origin_1&quot;,RESOLUTION=480x270
+    chunklist_b400000_sleng_HASH-5.m3u8
+    #EXT-X-STREAM-INF:BANDWIDTH=400000,NAME=&quot;sHD_Origin_1&quot;,RESOLUTION=480x270
+    chunklist_b400000_sleng_HASH-6.m3u8
+  </code>
+</pre>
+
+<p>
+  Where <code>HASH-(1/2/3/4/5/6)</code> is a value generated based on the properties of the stream (BANDWIDTH,NAME,RESOLUTION).
+</p>
+
+<hr class="HR1">
+
+
+<h4 id="3-2-4">3.2.4. Triggers to Use a Redundant Stream</h4>
+
+<p>
+  In contrast to the specialized CDN behavior,
+  a regular CDN does not send server-error responses to clients, when one of the subsystems fails.
+  Instead, any server-error responses generated by the entry point servers (or intermediate CDN nodes) are forwarded
+  to the
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#1-3-4">health check system</a>.
+  <br>
+  Thus, in almost all cases described in <a href="#3-1-4">Section 3.1.4.</a> (examples for <strong>HLS Pull</strong> method),
+  the CDN will start forwarding requests to the alternative origin server.
+</p>
+
+<p>
+  Inasmuch as the names of the <code>Real</code> streams on <strong>Origin 1</strong> match
+  the names of the <code>Fake</code> streams on <strong>Origin 2</strong> (and vice versa),
+  the client will receive an error response containing a <code>404 status code</code>
+  immediately after the CDN switches to the alternative origin server.
+</p>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Note:</h5>
+
+<p>
+  There is one special failure case which is critical for this type of system:
+</p>
+
+<blockquote>
+  <ul>
+    <li>
+      The HTTP server on the origin server is running but an encoding process has stopped.<br>
+      <br>
+      Since in this case there is no HLS data to publish, when the entry-point server requests this data,
+      the origin server will generate a client-error response containing the <code>404 status code</code>
+      (<a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/404">Not Found</a>).
+    </li>
+  </ul>
+</blockquote>
+
+<p>
+  Since this error is indistinguishable from the error that happens after the CDN failover
+  (switching to the alternative origin server), it cannon be handled by the CDN.
+  As a result, the media player will trap into an error loop, requesting non-existent streams from the current origin.
+</p>
+
+<p>
+  Therefore, you have to take measures to avoid or prevent such situations.
+  For example, you can use an application to monitor the status of the encoding process
+  and apply a <code>REJECT</code> firewall rule to cause the CDN to switch to the alternative origin.
+</p>
+
+<hr class="HR1">
+
+
+<img class="diagrams" src="./pics/3.2.4.V2-Switching-to-Redundant-Stream.svg" alt="The media player switches to a redundant stream after the origin server has been put into maintenance state.">
+<p>
+  &nbsp;&nbsp;
+  <em>Figure 3.2.4. : The media player switches to a redundant stream after the origin server has been put into maintenance state.</em>
+</p>
+
+<hr class="HR2">
+
+
+<h2 id="4">4. Switching to a Redundant Stream</h2>
+
+<br>
+
+<p>
+  I believe it would be great if stream failure handling functionality
+  was built into the media player itself at a fairly low level.
+  Then, the reaction time to events signaling the need to switch to a redundant stream could be reduced to the minimum,
+  and the switching itself would appear almost imperceptible to the end user.
+</p>
+
+<p>
+  Though, at the time I encountered this problem,
+  the player that I was supposed to use was not able to correctly handle such events.
+  Therefore, I happened to write a simple wrapper for the player that listens to the player events
+  and, if necessary, causes it to play an alternative stream after restart.
+</p>
+
+<p>
+  Here is a <a target="_blank" href="https://github.com/2G-Lab/2G-Wrapper-HLS">repository</a> with this code.
+</p>
+
+<hr class="HR1">
+
+
+<h5>&nbsp;Note:</h5>
+
+<p>
+  An attentive reader will point out to the factors
+  which affect the time, for which video playback is interrupted,
+  when the player switches to an alternative stream.
+</p>
+
+<ul>
+  <li>
+    The wrapper interacts with the media player using the event mechanism and player's API.<br>
+    This means that first an error response is processed by the media player itself,
+    and only after that the player emits an event that can be handled externally.<br>
+    &nbsp;&#x1F412;&nbsp;If I understand programming correctly,
+    the event exchange mechanism is an expensive activity in terms of time consumption.
+  </li>
+</ul>
+
+<p>
+  As the wrapper restarts the media player, some essentially unnecessary steps are performed.
+</p>
+
+<ul>
+  <li>
+    The player is destroyed and a new player instance is created.<br>
+    Honestly, I think this action should not take much time
+    since the player code is already converted to bytecode and stored in memory.<br>
+  </li>
+  <li>
+    The HLS manifest is loaded again.<br>
+    This can take considerable time, especially on networks with long pings.<br>
+    (For example, when using a 4G mobile network, downloading the manifest file may take up to 0.5 seconds.)<br>
+    </li>
+  <li>
+    The HLS manifest is parsed again.<br>
+    I think this should happen quickly, but still worth mentioning.
+  </li>
+</ul>
+
+<p>
+  Obviously, using such an approach to solving this problem
+  leads to extremely irrational expenditure of resources, primarily time.<br>
+  The only advantage of this approach is the ease of implementation (it is fast and cheap).<br>
+  &nbsp;&#x1F412;&nbsp;Such solutions probably should not be used for systems that you would like to be proud of.
+</p>
+
+<p>
+  However, despite all of the above, if the client&#39;s network condition is good enough,
+  the time for which video playback stops is usually something about <code>0.6-1.0</code> second.
+</p>
+
+<p>
+  It is important to note that if all components of your system are well configured, if they work reliably enough,
+  then events when the player needs to switch to an alternative stream occur quite rarely.
+</p>
+
+<p>
+  Thus, in some cases, using this approach may be economically justified. &#x1F917;
+</p>
+
+<hr class="HR1">
+
+
+<h2 id="0x00">0x00. User Experience First</h2>
+
+<p>
+  Reflecting on the intricacies of the technologies and engineering solutions discussed in this note,
+  I cannot shake the feeling that this is all wrong.
+  By trying to solve a fairly simple problem, we complicate the entire system.
+  We figure out how to modify the operation of the origin server, CDN, media player,
+  just to workaround two limitations imposed by
+  the <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc8216">HLS protocol specification</a>
+  and <a target="_blank" href="https://w3c.github.io/media-source/">Media Source Extensions</a>.
+  The result is still unsatisfactory, to be honest.
+</p>
+
+<p>
+  Here I would like to propose a way to provide a great user experience
+  while maintaining the simplicity and reliability of a <strong>live</strong> video streaming system.
+</p>
+
+<p>
+  We must return to the simplest
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#1">system structure</a>:
+</p>
+
+<ul>
+  <li>
+    We need to use the normal master playlist on the origin servers,
+    such as the one shown in <a href="#1">this note (Section 1)</a>.
+    <br>
+  </li>
+  <li>
+    We need to use a regular CDN that just switches to the backup origin server
+    when a fault of the network or the primary origin server has been detected.
+    <br>
+  </li>
+</ul>
+
+<p>
+  As shown in
+  <a target="_blank" href="https://2g-lab.github.io/2G-Notes/4600.what-is-wrong-with-HLS/HLS-Study-4600.html#2">my previous note (Section 2)</a>,
+  such a system violates the HLS protocol specification
+  <a target="_blank" href="https://datatracker.ietf.org/doc/html/rfc8216#section-6.2.2">requirement</a><br>
+  that the value of <code>EXT-X-MEDIA-SEQUENCE</code> tag MUST NOT decrease or wrap.<br>
+  But this is exactly what happens when the CDN switches to an alternative origin server.
+</p>
+
+<p>
+  Moreover, the timestamps in two media segments, delivered in a row from different origin servers,
+  are <strong>not</strong> in sequence.
+  This means that if you simply append these segments one by one
+  to the <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/SourceBuffer">SourceBuffer</a>
+  of <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/MediaSource">MediaSource object</a>,
+  the video element will not play them continuously.
+</p>
+
+<p>
+  To resolve these problems, the media player functionality needs to be adapted (expanded) to such a system:
+</p>
+
+<ul>
+  <li>
+    When playing a <strong>live</strong> stream, the media player must ignore
+    the <code>EXT-X-MEDIA-SEQUENCE</code> tag in a media playlist.<br>
+    Instead, it must simply download the last media segment from the updated media playlist.
+    <br>
+  </li>
+  <li>
+    The media player must check and, if needed, change the timestamps of each frame in each media segment
+    so that they represent a growing sequence with the correct interval.<br>
+    After this, media segments with modified timestamps can be appended to the buffer of <code>MediaSource</code> object
+    for further demultiplexing, decoding and playing.
+    <br>
+  </li>
+</ul>
+
+<br>
+
+<p>
+  Despite the fact that technically this is not a difficult task,
+  there will be no implementation examples in this section.
+</p>
+
+<br>
+
+<hr class="HR2">
+
+<br>
+
+<p>2G - 4608</p>
+
+<br>
+
+</main>
+</body>
+</html>
